@@ -219,8 +219,13 @@ async function loadFirebaseUser(firebaseUser, services) {
   const profile = firebaseProfile(firebaseUser);
   const { firebaseDb, firestoreSdk } = services;
   const userRef = firestoreSdk.doc(firebaseDb, "users", profile.uid);
-  const snapshot = await firestoreSdk.getDoc(userRef);
-  return snapshot.exists() ? normalizeUser(snapshot.data(), profile) : blankUser(profile);
+  try {
+    const snapshot = await firestoreSdk.getDoc(userRef);
+    return snapshot.exists() ? normalizeUser(snapshot.data(), profile) : blankUser(profile);
+  } catch (error) {
+    console.warn("Firestore user load failed, using a local profile:", error);
+    return blankUser(profile);
+  }
 }
 
 const storage = {
@@ -231,7 +236,11 @@ const storage = {
     const services = await getFirebaseServices();
     const result = await services.authSdk.signInWithPopup(services.firebaseAuth, services.googleProvider);
     const data = await loadFirebaseUser(result.user, services);
-    await this.save(data);
+    try {
+      await this.save(data);
+    } catch (error) {
+      console.warn("Firestore user save failed; progress is cached locally for now:", error);
+    }
     return data;
   },
   async save(data) {
@@ -1281,7 +1290,9 @@ $("#googleLoginBtn").addEventListener("click", async () => {
     showScreen("homeScreen");
   } catch (error) {
     console.error("Google sign-in failed:", error);
-    alert("Google 로그인에 실패했습니다. Firebase Authentication에서 Google 로그인을 켜고, Firestore Database를 만든 뒤 다시 시도해주세요.");
+    const code = error?.code ? `\n\n오류 코드: ${error.code}` : "";
+    const message = error?.message ? `\n${error.message}` : "";
+    alert(`Google 로그인에 실패했습니다.${code}${message}\n\nFirebase Authentication에서 Google 로그인이 켜져 있는지, 승인된 도메인에 Netlify 주소가 추가되어 있는지 확인해주세요.`);
   }
 });
 
