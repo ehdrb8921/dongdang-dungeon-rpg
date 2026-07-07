@@ -1,5 +1,44 @@
 "use strict";
 
+const firebaseConfig = {
+  apiKey: "AIzaSyA91gqyrlA7DB-euEsrLx9onmTiDG_fmmc",
+  authDomain: "dongdang-dungeon-rpg.firebaseapp.com",
+  projectId: "dongdang-dungeon-rpg",
+  storageBucket: "dongdang-dungeon-rpg.firebasestorage.app",
+  messagingSenderId: "273199982049",
+  appId: "1:273199982049:web:741894ab32b6d0dea15ea0",
+  measurementId: "G-4CNXRMBGHY"
+};
+
+let firebaseServicesPromise = null;
+
+function getFirebaseServices() {
+  firebaseServicesPromise ||= Promise.all([
+    import("https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js"),
+    import("https://www.gstatic.com/firebasejs/12.15.0/firebase-analytics.js"),
+    import("https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js"),
+    import("https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js")
+  ]).then(([appSdk, analyticsSdk, authSdk, firestoreSdk]) => {
+    const firebaseApp = appSdk.initializeApp(firebaseConfig);
+    const firebaseAuth = authSdk.getAuth(firebaseApp);
+    const firebaseDb = firestoreSdk.getFirestore(firebaseApp);
+    const googleProvider = new authSdk.GoogleAuthProvider();
+
+    analyticsSdk.isSupported()
+      .then(supported => {
+        if (supported) analyticsSdk.getAnalytics(firebaseApp);
+      })
+      .catch(error => console.warn("Firebase analytics skipped:", error));
+
+    return { authSdk, firestoreSdk, firebaseAuth, firebaseDb, googleProvider };
+  }).catch(error => {
+    console.error("Firebase SDK load failed:", error);
+    throw error;
+  });
+
+  return firebaseServicesPromise;
+}
+
 const CHARACTERS = [
   { id: "warrior_01", name: "초보 검사", icon: "검", color: "#ffd66e", accent: "#f2a13a", prop: "sword", passive: "공격력 증가", unlock: "기본 지급", forceCost: 0 },
   { id: "mage_01", name: "말랑 마법사", icon: "마", color: "#a58bff", accent: "#6e57db", prop: "staff", passive: "스킬 쿨타임 감소", unlock: "1스테이지 클리어", forceCost: 1500 },
@@ -129,31 +168,85 @@ function blankUser(profile = {}) {
   };
 }
 
+function mergeUserData(base, saved = {}) {
+  const merged = {
+    ...base,
+    ...saved,
+    characters: { ...base.characters, ...(saved.characters || {}) },
+    records: { ...base.records, ...(saved.records || {}) },
+    progress: { ...base.progress, ...(saved.progress || {}) },
+    equipped: { ...base.equipped, ...(saved.equipped || {}) },
+    equipments: Array.isArray(saved.equipments) ? saved.equipments : base.equipments
+  };
+
+  delete merged.updatedAt;
+  return merged;
+}
+
+function normalizeUser(saved = {}, profile = {}) {
+  const normalized = mergeUserData(blankUser(profile), saved);
+  normalized.uid = profile.uid || normalized.uid;
+  normalized.nickname = profile.nickname || normalized.nickname;
+  normalized.email = profile.email || normalized.email;
+  normalized.photoURL = profile.photoURL || normalized.photoURL;
+  normalized.provider = profile.provider || normalized.provider;
+  return normalized;
+}
+
+function firebaseProfile(firebaseUser) {
+  return {
+    uid: firebaseUser.uid,
+    nickname: firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "동당탕탕용사",
+    email: firebaseUser.email || "",
+    photoURL: firebaseUser.photoURL || "",
+    provider: "google"
+  };
+}
+
+function loadCachedUser() {
+  const existing = localStorage.getItem(STORAGE_KEY);
+  if (!existing) return null;
+  try {
+    return normalizeUser(JSON.parse(existing));
+  } catch (error) {
+    console.warn("Saved user data was reset:", error);
+    localStorage.removeItem(STORAGE_KEY);
+    return null;
+  }
+}
+
+async function loadFirebaseUser(firebaseUser, services) {
+  const profile = firebaseProfile(firebaseUser);
+  const { firebaseDb, firestoreSdk } = services;
+  const userRef = firestoreSdk.doc(firebaseDb, "users", profile.uid);
+  const snapshot = await firestoreSdk.getDoc(userRef);
+  return snapshot.exists() ? normalizeUser(snapshot.data(), profile) : blankUser(profile);
+}
+
 const storage = {
   async signInGuest() {
-    const existing = localStorage.getItem(STORAGE_KEY);
-    if (existing) return JSON.parse(existing);
-    return blankUser();
+    return loadCachedUser() || blankUser();
   },
   async signInGoogle() {
-    const existing = localStorage.getItem(STORAGE_KEY);
-    if (existing) {
-      const data = JSON.parse(existing);
-      data.provider = "google-demo";
-      data.email ||= "demo.user@gmail.com";
-      data.lastLoginAt = new Date().toISOString();
-      return data;
-    }
-    return blankUser({
-      uid: `google_demo_${crypto.randomUUID()}`,
-      nickname: "동당탕탕용사",
-      email: "demo.user@gmail.com",
-      provider: "google-demo"
-    });
+    const services = await getFirebaseServices();
+    const result = await services.authSdk.signInWithPopup(services.firebaseAuth, services.googleProvider);
+    const data = await loadFirebaseUser(result.user, services);
+    await this.save(data);
+    return data;
   },
   async save(data) {
     data.lastLoginAt = new Date().toISOString();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+
+    if (data.provider === "google") {
+      const services = await getFirebaseServices();
+      const userRef = services.firestoreSdk.doc(services.firebaseDb, "users", data.uid);
+      await services.firestoreSdk.setDoc(
+        userRef,
+        { ...data, updatedAt: services.firestoreSdk.serverTimestamp() },
+        { merge: true }
+      );
+    }
   }
 };
 
@@ -1182,9 +1275,14 @@ document.addEventListener("keyup", event => {
 });
 
 $("#googleLoginBtn").addEventListener("click", async () => {
-  user = await storage.signInGoogle();
-  renderHome();
-  showScreen("homeScreen");
+  try {
+    user = await storage.signInGoogle();
+    renderHome();
+    showScreen("homeScreen");
+  } catch (error) {
+    console.error("Google sign-in failed:", error);
+    alert("Google 로그인에 실패했습니다. Firebase Authentication에서 Google 로그인을 켜고, Firestore Database를 만든 뒤 다시 시도해주세요.");
+  }
 });
 
 $("#guestLoginBtn").addEventListener("click", async () => {
