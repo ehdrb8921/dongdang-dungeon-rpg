@@ -52,9 +52,9 @@ const CHARACTERS = [
 
 const PASSIVE_COST = { 2: 500, 3: 1000, 4: 2000, 5: 4000 };
 const CHESTS = [
-  { id: "spark_weapon", name: "반짝 무기 상자", type: "weapon", cost: 1000, odds: { A: 6, B: 20, C: 34, D: 40 } },
+  { id: "spark_weapon", name: "반짝 무기 상자", type: "weapon", cost: 1000, odds: { A: 12, B: 25, C: 28, D: 35 } },
   { id: "legend_weapon", name: "전설 무기 상자", type: "weapon", cost: 1500, odds: { S: 2, A: 8, B: 20, C: 30, D: 40 } },
-  { id: "spark_armor", name: "반짝 갑옷 상자", type: "armor", cost: 1000, odds: { A: 6, B: 20, C: 34, D: 40 } },
+  { id: "spark_armor", name: "반짝 갑옷 상자", type: "armor", cost: 1000, odds: { A: 12, B: 25, C: 28, D: 35 } },
   { id: "legend_armor", name: "전설 갑옷 상자", type: "armor", cost: 1500, odds: { S: 2, A: 8, B: 20, C: 30, D: 40 } }
 ];
 
@@ -118,6 +118,12 @@ const VIEW_H = 1280;
 const WORLD_W = VIEW_W * 3;
 const WORLD_H = VIEW_H * 3;
 
+const BOSS_TYPES = [
+  { id: "ember", name: "Ember King", color: "#ff6b55", accent: "#ffd66e", shotColor: "#ffcf5a", warningColor: "#ff6b55", warningShape: "circle", projectileCount: 3, projectileSpread: 0.24, projectileSpeed: 245, projectileRadius: 11, projectileDamage: 13, projectileCooldown: 1.55, slamCooldown: 6.2, slamRadius: 96, slamDamage: 25 },
+  { id: "star", name: "Star Witch", color: "#a58bff", accent: "#fff176", shotColor: "#d9ccff", warningColor: "#a58bff", warningShape: "star", projectileCount: 5, projectileSpread: 0.18, projectileSpeed: 285, projectileRadius: 9, projectileDamage: 11, projectileCooldown: 1.25, slamCooldown: 5.4, slamRadius: 86, slamDamage: 22 },
+  { id: "square", name: "Cube Warden", color: "#5aa9ff", accent: "#7ed7b5", shotColor: "#7ab8ff", warningColor: "#5aa9ff", warningShape: "square", projectileCount: 2, projectileSpread: 0.34, projectileSpeed: 220, projectileRadius: 14, projectileDamage: 15, projectileCooldown: 1.75, slamCooldown: 6.8, slamRadius: 106, slamDamage: 28 }
+];
+
 const STORAGE_KEY = "ddrpg_user_v1";
 let user = null;
 let lastResult = null;
@@ -125,6 +131,121 @@ let enemySeq = 0;
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
+
+const audio = {
+  ctx: null,
+  master: null,
+  musicGain: null,
+  musicTimer: null,
+  musicMode: "",
+  menuStep: 0,
+  gameStep: 0,
+  init() {
+    if (this.ctx) return;
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    this.ctx = new AudioContext();
+    this.master = this.ctx.createGain();
+    this.master.gain.value = 0.22;
+    this.master.connect(this.ctx.destination);
+    this.musicGain = this.ctx.createGain();
+    this.musicGain.gain.value = 0.16;
+    this.musicGain.connect(this.master);
+  },
+  resume() {
+    this.init();
+    if (this.ctx?.state === "suspended") this.ctx.resume();
+  },
+  tone(freq, duration = 0.08, type = "sine", volume = 0.2, slide = 1) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, now);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(20, freq * slide), now + duration);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(volume, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    osc.connect(gain);
+    gain.connect(this.master);
+    osc.start(now);
+    osc.stop(now + duration + 0.02);
+  },
+  noise(duration = 0.08, volume = 0.18, tone = 900) {
+    if (!this.ctx) return;
+    const length = Math.max(1, Math.floor(this.ctx.sampleRate * duration));
+    const buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length);
+    const src = this.ctx.createBufferSource();
+    const filter = this.ctx.createBiquadFilter();
+    const gain = this.ctx.createGain();
+    src.buffer = buffer;
+    filter.type = "bandpass";
+    filter.frequency.value = tone;
+    gain.gain.value = volume;
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.master);
+    src.start();
+  },
+  play(name) {
+    this.resume();
+    if (name === "playerAttack") this.tone(760, 0.055, "triangle", 0.045, 1.35);
+    if (name === "hit") this.noise(0.055, 0.07, 1200);
+    if (name === "bossAttack") {
+      this.tone(180, 0.18, "sawtooth", 0.12, 0.62);
+      this.noise(0.12, 0.08, 360);
+    }
+    if (name === "bossWave") {
+      this.tone(130, 0.18, "sawtooth", 0.12, 1.7);
+      setTimeout(() => this.tone(196, 0.2, "sawtooth", 0.1, 1.45), 110);
+    }
+    if (name === "slam") {
+      this.tone(90, 0.24, "square", 0.14, 0.45);
+      this.noise(0.16, 0.12, 180);
+    }
+    if (name === "hurt") this.tone(120, 0.12, "square", 0.08, 0.7);
+  },
+  setMusic(mode) {
+    this.resume();
+    if (!this.ctx || this.musicMode === mode) return;
+    this.stopMusic();
+    this.musicMode = mode;
+    const playStep = () => {
+      if (!this.ctx || this.musicMode !== mode) return;
+      const menu = [392, 494, 587, 494, 440, 523, 659, 523];
+      const game = [196, 247, 294, 330, 294, 247, 220, 262];
+      const seq = mode === "game" ? game : menu;
+      const stepKey = mode === "game" ? "gameStep" : "menuStep";
+      const freq = seq[this[stepKey] % seq.length];
+      this[stepKey]++;
+      this.musicTone(freq, mode === "game" ? 0.16 : 0.22, mode === "game" ? "square" : "triangle", mode === "game" ? 0.06 : 0.045);
+      this.musicTimer = setTimeout(playStep, mode === "game" ? 260 : 390);
+    };
+    playStep();
+  },
+  musicTone(freq, duration, type, volume) {
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(volume, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    osc.connect(gain);
+    gain.connect(this.musicGain);
+    osc.start(now);
+    osc.stop(now + duration + 0.02);
+  },
+  stopMusic() {
+    if (this.musicTimer) clearTimeout(this.musicTimer);
+    this.musicTimer = null;
+    this.musicMode = "";
+  }
+};
 
 function blankUser(profile = {}) {
   const characters = {};
@@ -503,7 +624,10 @@ const game = {
       player: { x: WORLD_W / 2, y: WORLD_H / 2, r: 24, hp: 100 + (ch.id === "knight_01" ? passive * 10 : 0), maxHp: 100 + (ch.id === "knight_01" ? passive * 10 : 0), inv: 0 },
       enemies: [],
       shots: [],
+      enemyShots: [],
+      warnings: [],
       pops: [],
+      alerts: [],
       nextSpawn: 0,
       nextAttack: 0,
       nextSkill: 0,
@@ -538,7 +662,9 @@ const game = {
       lightning: ch.id === "spark_01" ? 1 : 0,
       arrow: ch.id === "archer_01" ? 1 : 0,
       selectedCards: [],
-      cardLevels: {}
+      cardLevels: {},
+      bossWavesSpawned: {},
+      bossWaveActive: false
     };
     this.running = true;
     this.paused = false;
@@ -555,6 +681,7 @@ const game = {
     this.joy.y = 0;
     this.keys = {};
     this.bindJoystick();
+    audio.setMusic("game");
     requestAnimationFrame(ts => this.loop(ts));
   },
   bindJoystick() {
@@ -614,7 +741,10 @@ const game = {
   update(dt) {
     const s = this.state;
     s.t += dt;
-    s.wave = 1 + Math.floor(s.t / 35);
+    const nextWave = 1 + Math.floor(s.t / 35);
+    if (nextWave !== s.wave) s.bossWaveActive = false;
+    s.wave = nextWave;
+    if (s.wave % 5 === 0 && !s.bossWavesSpawned[s.wave]) this.spawnBossWave();
     if (s.t > 120) s.clearedDungeonCount = Math.max(s.clearedDungeonCount, 1);
     if (s.t > 210) s.clearedDungeonCount = Math.max(s.clearedDungeonCount, 2);
     if (s.t > 300) {
@@ -662,8 +792,11 @@ const game = {
       }
     }
     this.updateShots(dt);
+    this.updateEnemyShots(dt);
+    this.updateWarnings(dt);
     this.updateEnemies(dt);
     s.pops = s.pops.filter(pop => (pop.life -= dt) > 0);
+    s.alerts = s.alerts.filter(alert => (alert.life -= dt) > 0);
     if (p.hp <= 0) this.end(false);
     this.updateHud();
   },
@@ -688,18 +821,44 @@ const game = {
     ][edge];
     pos.x = Math.max(20, Math.min(s.world.w - 20, pos.x));
     pos.y = Math.max(20, Math.min(s.world.h - 20, pos.y));
-    const boss = !s.bossKilled && s.t > 95;
     s.enemies.push({
       id: ++enemySeq,
       x: pos.x,
       y: pos.y,
-      r: boss ? 42 : 20 + Math.random() * 8,
-      hp: boss ? 180 + s.wave * 22 : 22 + s.wave * 5,
-      maxHp: boss ? 180 + s.wave * 22 : 22 + s.wave * 5,
-      speed: boss ? 45 : 58 + Math.random() * 20,
-      boss,
+      r: 20 + Math.random() * 8,
+      hp: 22 + s.wave * 5,
+      maxHp: 22 + s.wave * 5,
+      speed: 58 + Math.random() * 20,
+      boss: false,
       poison: 0
     });
+  },
+  spawnBossWave() {
+    const s = this.state;
+    s.bossWavesSpawned[s.wave] = true;
+    s.bossWaveActive = true;
+    const type = BOSS_TYPES[Math.floor((s.wave / 5 - 1) % BOSS_TYPES.length)];
+    const angle = Math.random() * Math.PI * 2;
+    const distance = 430;
+    const x = Math.max(64, Math.min(s.world.w - 64, s.player.x + Math.cos(angle) * distance));
+    const y = Math.max(64, Math.min(s.world.h - 64, s.player.y + Math.sin(angle) * distance));
+    const hp = 620 + s.wave * 86;
+    s.enemies.push({
+      id: ++enemySeq,
+      x,
+      y,
+      r: 50,
+      hp,
+      maxHp: hp,
+      speed: Math.max(34, 54 - s.wave * 0.6),
+      boss: true,
+      bossType: type,
+      nextProjectile: 0.7,
+      nextSlam: 2.6,
+      poison: 0
+    });
+    s.alerts.push({ text: `BOSS WAVE! ${type.name}`, life: 3.2, total: 3.2 });
+    audio.play("bossWave");
   },
   nearestEnemy() {
     const p = this.state.player;
@@ -722,6 +881,7 @@ const game = {
     const s = this.state;
     const target = this.nearestEnemy();
     if (!target) return;
+    audio.play("playerAttack");
     const count = Math.min(5, s.projectiles + s.arrow);
     for (let i = 0; i < count; i++) {
       const angle = Math.atan2(target.y - s.player.y, target.x - s.player.x) + (i - (count - 1) / 2) * 0.18;
@@ -827,6 +987,45 @@ const game = {
       shot.y < s.world.h + 80
     );
   },
+  updateEnemyShots(dt) {
+    const s = this.state;
+    const p = s.player;
+    s.enemyShots.forEach(shot => {
+      shot.x += shot.vx * dt;
+      shot.y += shot.vy * dt;
+      shot.life -= dt;
+      if (shot.life > 0 && Math.hypot(shot.x - p.x, shot.y - p.y) < shot.r + p.r && p.inv <= 0) {
+        this.damagePlayer(shot.damage);
+        shot.life = 0;
+      }
+    });
+    s.enemyShots = s.enemyShots.filter(shot =>
+      shot.life > 0 &&
+      shot.x > -120 &&
+      shot.y > -120 &&
+      shot.x < s.world.w + 120 &&
+      shot.y < s.world.h + 120
+    );
+  },
+  updateWarnings(dt) {
+    const s = this.state;
+    const p = s.player;
+    s.warnings.forEach(warning => {
+      warning.life -= dt;
+      if (warning.life <= 0 && !warning.done) {
+        warning.done = true;
+        if (warning.boss?.hp > 0) {
+          warning.boss.x = warning.x;
+          warning.boss.y = warning.y - warning.boss.r * 0.2;
+        }
+        audio.play("slam");
+        s.pops.push({ x: warning.x, y: warning.y, radius: warning.r, ring: true, life: 0.42, color: warning.color });
+        s.pops.push({ x: warning.x, y: warning.y, text: "SLAM", life: 0.55 });
+        if (Math.hypot(p.x - warning.x, p.y - warning.y) <= warning.r + p.r && p.inv <= 0) this.damagePlayer(warning.damage);
+      }
+    });
+    s.warnings = s.warnings.filter(warning => warning.life > -0.18);
+  },
   updateEnemies(dt) {
     const s = this.state;
     const p = s.player;
@@ -840,10 +1039,9 @@ const game = {
         this.damageEnemy(enemy, 6 * dt, "poisonDot", true);
       }
       if (Math.hypot(enemy.x - p.x, enemy.y - p.y) < enemy.r + p.r && p.inv <= 0) {
-        p.hp -= enemy.boss ? 22 : 11;
-        p.inv = s.invDuration;
-        s.timeSinceDamage = 0;
+        this.damagePlayer(enemy.boss ? 22 : 11);
       }
+      if (enemy.boss) this.updateBossAttack(enemy, dt);
     });
     s.enemies = s.enemies.filter(enemy => {
       if (enemy.hp > 0) return true;
@@ -851,12 +1049,75 @@ const game = {
       return false;
     });
   },
+  updateBossAttack(enemy, dt) {
+    const s = this.state;
+    const type = enemy.bossType || BOSS_TYPES[0];
+    enemy.nextProjectile -= dt;
+    enemy.nextSlam -= dt;
+    if (enemy.nextProjectile <= 0) {
+      this.fireBossProjectile(enemy, type);
+      enemy.nextProjectile = Math.max(0.65, type.projectileCooldown - s.wave * 0.025);
+    }
+    if (enemy.nextSlam <= 0) {
+      this.queueBossSlam(enemy, type);
+      enemy.nextSlam = Math.max(3.4, type.slamCooldown - s.wave * 0.05);
+    }
+  },
+  fireBossProjectile(enemy, type) {
+    const s = this.state;
+    const base = Math.atan2(s.player.y - enemy.y, s.player.x - enemy.x);
+    const count = type.projectileCount;
+    for (let i = 0; i < count; i++) {
+      const angle = base + (i - (count - 1) / 2) * type.projectileSpread;
+      s.enemyShots.push({
+        x: enemy.x,
+        y: enemy.y,
+        vx: Math.cos(angle) * type.projectileSpeed,
+        vy: Math.sin(angle) * type.projectileSpeed,
+        r: type.projectileRadius,
+        damage: type.projectileDamage,
+        life: 3.2,
+        color: type.shotColor,
+        shape: type.warningShape
+      });
+    }
+    audio.play("bossAttack");
+  },
+  queueBossSlam(enemy, type) {
+    const s = this.state;
+    const lead = 0.25;
+    const x = Math.max(70, Math.min(s.world.w - 70, s.player.x + this.joy.x * s.moveSpeed * lead));
+    const y = Math.max(70, Math.min(s.world.h - 70, s.player.y + this.joy.y * s.moveSpeed * lead));
+    s.warnings.push({
+      x,
+      y,
+      r: type.slamRadius,
+      damage: type.slamDamage,
+      life: 1.75,
+      total: 1.75,
+      color: type.warningColor,
+      shape: type.warningShape,
+      boss: enemy
+    });
+    audio.play("bossAttack");
+  },
+  damagePlayer(damage) {
+    const s = this.state;
+    s.player.hp -= damage;
+    s.player.inv = s.invDuration;
+    s.timeSinceDamage = 0;
+    s.pops.push({ x: s.player.x, y: s.player.y, text: `-${Math.round(damage)}`, life: 0.42, color: "#ff5a68" });
+    audio.play("hurt");
+  },
   damageEnemy(enemy, damage, type, dot = false) {
     const s = this.state;
     if (type === "poison" && Math.random() < 0.45 + s.statusChance) enemy.poison = 4;
     const finalDamage = damage * s.damageMultiplier * (enemy.boss ? 1 + s.bossDamage : 1);
     enemy.hp -= finalDamage;
-    if (!dot) s.pops.push({ x: enemy.x, y: enemy.y, text: Math.round(finalDamage), life: 0.45 });
+    if (!dot) {
+      s.pops.push({ x: enemy.x, y: enemy.y, text: Math.round(finalDamage), life: 0.45 });
+      audio.play("hit");
+    }
   },
   damageArea(x, y, radius, damage, type, exclude = null) {
     const s = this.state;
@@ -984,6 +1245,7 @@ const game = {
     ctx.strokeStyle = "rgba(36,49,63,0.1)";
     ctx.lineWidth = 8;
     ctx.strokeRect(4, 4, s.world.w - 8, s.world.h - 8);
+    s.warnings.forEach(warning => this.drawWarning(ctx, warning));
     s.enemies.forEach(e => this.drawEnemy(ctx, e));
     s.shots.forEach(shot => {
       ctx.fillStyle = shot.color;
@@ -991,6 +1253,7 @@ const game = {
       ctx.arc(shot.x, shot.y, shot.r, 0, Math.PI * 2);
       ctx.fill();
     });
+    s.enemyShots.forEach(shot => this.drawProjectileShape(ctx, shot.x, shot.y, shot.r, shot.shape, shot.color));
     this.drawPlayer(ctx, s.player, s.ch);
     s.pops.forEach(pop => {
       ctx.globalAlpha = Math.max(0, pop.life * 2);
@@ -1008,13 +1271,29 @@ const game = {
         ctx.lineTo(pop.x2, pop.y2);
         ctx.stroke();
       } else {
-        ctx.fillStyle = "#24313f";
+        ctx.fillStyle = pop.color || "#24313f";
         ctx.font = "bold 22px system-ui";
+        ctx.textAlign = "left";
         ctx.fillText(pop.text, pop.x, pop.y - (0.45 - pop.life) * 45);
       }
       ctx.globalAlpha = 1;
     });
     ctx.restore();
+    s.alerts.forEach(alert => {
+      const alpha = Math.min(1, alert.life) * 0.92;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = "rgba(36,49,63,0.78)";
+      ctx.fillRect(78, 116, VIEW_W - 156, 82);
+      ctx.strokeStyle = "#ffd66e";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(78, 116, VIEW_W - 156, 82);
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 34px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText(alert.text, VIEW_W / 2, 168);
+      ctx.restore();
+    });
     if (this.paused && $("#cardModal").hidden) {
       ctx.fillStyle = "rgba(36,49,63,0.42)";
       ctx.fillRect(0, 0, VIEW_W, VIEW_H);
@@ -1023,6 +1302,50 @@ const game = {
       ctx.textAlign = "center";
       ctx.fillText("PAUSE", VIEW_W / 2, VIEW_H / 2 - 20);
     }
+  },
+  drawWarning(ctx, warning) {
+    const progress = Math.max(0, Math.min(1, warning.life / warning.total));
+    ctx.save();
+    ctx.globalAlpha = 0.22 + (1 - progress) * 0.2;
+    ctx.fillStyle = warning.color;
+    ctx.strokeStyle = warning.color;
+    ctx.lineWidth = 6 + (1 - progress) * 6;
+    this.traceShape(ctx, warning.x, warning.y, warning.r, warning.shape);
+    ctx.fill();
+    ctx.globalAlpha = 0.88;
+    this.traceShape(ctx, warning.x, warning.y, warning.r * (0.72 + progress * 0.28), warning.shape);
+    ctx.stroke();
+    ctx.restore();
+  },
+  drawProjectileShape(ctx, x, y, r, shape, color) {
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.strokeStyle = "rgba(36,49,63,0.18)";
+    ctx.lineWidth = 3;
+    this.traceShape(ctx, x, y, r, shape);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  },
+  traceShape(ctx, x, y, r, shape) {
+    ctx.beginPath();
+    if (shape === "square") {
+      ctx.rect(x - r, y - r, r * 2, r * 2);
+      return;
+    }
+    if (shape === "star") {
+      for (let i = 0; i < 10; i++) {
+        const radius = i % 2 === 0 ? r : r * 0.46;
+        const angle = -Math.PI / 2 + i * Math.PI / 5;
+        const px = x + Math.cos(angle) * radius;
+        const py = y + Math.sin(angle) * radius;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      return;
+    }
+    ctx.arc(x, y, r, 0, Math.PI * 2);
   },
   drawPlayer(ctx, p, ch) {
     ctx.save();
@@ -1169,10 +1492,21 @@ const game = {
     ctx.beginPath();
     ctx.ellipse(0, e.r * 0.85, e.r, e.r * 0.34, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = e.boss ? "#ff7c8a" : "#b9e36c";
+    const bossType = e.bossType || BOSS_TYPES[0];
+    ctx.fillStyle = e.boss ? bossType.color : "#b9e36c";
     ctx.beginPath();
     ctx.arc(0, 0, e.r, 0, Math.PI * 2);
     ctx.fill();
+    if (e.boss) {
+      ctx.fillStyle = bossType.accent;
+      ctx.beginPath();
+      ctx.moveTo(-e.r * 0.45, -e.r * 0.58);
+      ctx.lineTo(-e.r * 0.18, -e.r * 1.04);
+      ctx.lineTo(e.r * 0.08, -e.r * 0.58);
+      ctx.lineTo(e.r * 0.34, -e.r * 1.04);
+      ctx.lineTo(e.r * 0.58, -e.r * 0.58);
+      ctx.fill();
+    }
     ctx.fillStyle = "#24313f";
     ctx.beginPath();
     ctx.arc(-e.r * 0.32, -e.r * 0.1, e.r * 0.11, 0, Math.PI * 2);
@@ -1187,11 +1521,18 @@ const game = {
     ctx.fillRect(-e.r, -e.r - 10, e.r * 2, 5);
     ctx.fillStyle = "#ff5a68";
     ctx.fillRect(-e.r, -e.r - 10, e.r * 2 * Math.max(0, e.hp / e.maxHp), 5);
+    if (e.boss) {
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 18px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText(bossType.name, 0, -e.r - 20);
+    }
     ctx.restore();
   },
   end(cleared) {
     if (!this.running) return;
     this.running = false;
+    audio.setMusic("menu");
     const s = this.state;
     finishRun({
       characterId: s.characterId,
@@ -1285,6 +1626,7 @@ document.addEventListener("keyup", event => {
 
 $("#googleLoginBtn").addEventListener("click", async () => {
   try {
+    audio.setMusic("menu");
     user = await storage.signInGoogle();
     renderHome();
     showScreen("homeScreen");
@@ -1297,6 +1639,7 @@ $("#googleLoginBtn").addEventListener("click", async () => {
 });
 
 $("#guestLoginBtn").addEventListener("click", async () => {
+  audio.setMusic("menu");
   user = await storage.signInGuest();
   renderHome();
   showScreen("homeScreen");
@@ -1316,6 +1659,7 @@ $("#speedBtn").addEventListener("click", () => {
   $("#speedBtn").classList.toggle("active", game.speed === 2);
 });
 $("#claimRewardBtn").addEventListener("click", async () => {
+  audio.setMusic("menu");
   user.gold += lastResult.gold;
   updateUnlocks();
   await storage.save(user);
