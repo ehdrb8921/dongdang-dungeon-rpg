@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>동당탕탕 던전 RPG</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260707-8" />
   </head>
   <body>
     <main class="phone-shell" aria-label="동당탕탕 던전 RPG">
@@ -26,6 +26,10 @@
           <div>
             <strong id="nickname">동당탕탕용사</strong>
             <small id="accountType">게스트</small>
+            <form id="nicknameForm" class="nickname-form">
+              <input id="nicknameInput" type="text" maxlength="12" autocomplete="nickname" aria-label="닉네임" />
+              <button class="mini-btn good" type="submit">저장</button>
+            </form>
           </div>
           <div class="wallet">
             <span id="goldText">0G</span>
@@ -60,11 +64,25 @@
 
         <div id="recordsPanel" class="panel">
           <div id="recordGrid" class="record-grid"></div>
+          <section class="ranking-board" aria-label="랭킹">
+            <div class="ranking-head">
+              <strong>Top 10 랭킹</strong>
+              <button id="refreshRankingBtn" class="mini-btn" type="button">새로고침</button>
+            </div>
+            <div id="rankingList" class="ranking-list">
+              <div class="ranking-empty">랭킹을 불러오는 중...</div>
+            </div>
+          </section>
           <div class="ranking-note">
             <strong>랭킹 확장 구조</strong>
             <span>전체/주간/캐릭터별/웨이브/킬/생존 시간 기준으로 확장 가능</span>
           </div>
         </div>
+
+        <label class="volume-control">
+          <span>BGM</span>
+          <input id="homeMusicVolume" type="range" min="0" max="100" value="65" />
+        </label>
 
         <button id="startRunBtn" class="start-btn">던전 입장</button>
       </section>
@@ -79,7 +97,12 @@
           <button id="pauseBtn" class="round-control" type="button" aria-label="일시정지">Ⅱ</button>
           <button id="speedBtn" class="speed-control" type="button" aria-label="2배속">x1</button>
         </div>
+        <label class="game-volume-control">
+          <span>BGM</span>
+          <input id="gameMusicVolume" type="range" min="0" max="100" value="65" />
+        </label>
         <div class="xp-wrap"><div id="xpBar"></div></div>
+        <div id="buffHud" class="buff-hud" hidden></div>
         <div id="buildList" class="build-list"></div>
         <div id="joystick" class="joystick" aria-label="이동 조이스틱"><span></span></div>
         <div id="cardModal" class="card-modal" hidden>
@@ -95,6 +118,6 @@
       </section>
     </main>
 
-    <script src="./app.js"></script>
+    <script src="./app.js?v=20260707-8"></script>
   </body>
 </html>

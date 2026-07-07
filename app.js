@@ -114,15 +114,17 @@ const CARD_REQUIREMENTS = {
 };
 
 const VIEW_W = 720;
-const VIEW_H = 1280;
-const WORLD_W = VIEW_W * 3;
-const WORLD_H = VIEW_H * 3;
+let VIEW_H = 1280;
+let WORLD_W = VIEW_W * 3;
+let WORLD_H = VIEW_H * 3;
 
 const BOSS_TYPES = [
   { id: "ember", name: "Ember King", color: "#ff6b55", accent: "#ffd66e", shotColor: "#ffcf5a", warningColor: "#ff6b55", warningShape: "circle", projectileCount: 3, projectileSpread: 0.24, projectileSpeed: 245, projectileRadius: 11, projectileDamage: 13, projectileCooldown: 1.55, slamCooldown: 6.2, slamRadius: 96, slamDamage: 25 },
   { id: "star", name: "Star Witch", color: "#a58bff", accent: "#fff176", shotColor: "#d9ccff", warningColor: "#a58bff", warningShape: "star", projectileCount: 5, projectileSpread: 0.18, projectileSpeed: 285, projectileRadius: 9, projectileDamage: 11, projectileCooldown: 1.25, slamCooldown: 5.4, slamRadius: 86, slamDamage: 22 },
   { id: "square", name: "Cube Warden", color: "#5aa9ff", accent: "#7ed7b5", shotColor: "#7ab8ff", warningColor: "#5aa9ff", warningShape: "square", projectileCount: 2, projectileSpread: 0.34, projectileSpeed: 220, projectileRadius: 14, projectileDamage: 15, projectileCooldown: 1.75, slamCooldown: 6.8, slamRadius: 106, slamDamage: 28 }
 ];
+
+const AUDIO_STORAGE_KEY = "ddrpg_audio_v1";
 
 const STORAGE_KEY = "ddrpg_user_v1";
 let user = null;
@@ -140,105 +142,145 @@ const audio = {
   musicMode: "",
   menuStep: 0,
   gameStep: 0,
+  musicVolume: Number(localStorage.getItem(AUDIO_STORAGE_KEY) || 65) / 100,
   init() {
-    if (this.ctx) return;
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContext) return;
-    this.ctx = new AudioContext();
-    this.master = this.ctx.createGain();
-    this.master.gain.value = 0.22;
-    this.master.connect(this.ctx.destination);
-    this.musicGain = this.ctx.createGain();
-    this.musicGain.gain.value = 0.16;
-    this.musicGain.connect(this.master);
+    try {
+      if (this.ctx) return;
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+      this.ctx = new AudioContext();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.55;
+      this.master.connect(this.ctx.destination);
+      this.musicGain = this.ctx.createGain();
+      this.musicGain.gain.value = this.musicVolume;
+      this.musicGain.connect(this.master);
+    } catch (error) {
+      console.warn("Audio init skipped:", error);
+      this.ctx = null;
+      this.master = null;
+      this.musicGain = null;
+    }
+  },
+  setMusicVolume(value) {
+    const next = Math.max(0, Math.min(1, Number(value) / 100));
+    this.musicVolume = Number.isFinite(next) ? next : 0.65;
+    localStorage.setItem(AUDIO_STORAGE_KEY, Math.round(this.musicVolume * 100));
+    if (this.musicGain) this.musicGain.gain.value = this.musicVolume;
+    syncVolumeControls();
   },
   resume() {
-    this.init();
-    if (this.ctx?.state === "suspended") this.ctx.resume();
+    try {
+      this.init();
+      if (this.ctx?.state === "suspended") this.ctx.resume().catch(() => {});
+    } catch (error) {
+      console.warn("Audio resume skipped:", error);
+    }
   },
   tone(freq, duration = 0.08, type = "sine", volume = 0.2, slide = 1) {
-    if (!this.ctx) return;
-    const now = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, now);
-    osc.frequency.exponentialRampToValueAtTime(Math.max(20, freq * slide), now + duration);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(volume, now + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    osc.connect(gain);
-    gain.connect(this.master);
-    osc.start(now);
-    osc.stop(now + duration + 0.02);
+    try {
+      if (!this.ctx || !this.master) return;
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, now);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(20, freq * slide), now + duration);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(volume, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      osc.connect(gain);
+      gain.connect(this.master);
+      osc.start(now);
+      osc.stop(now + duration + 0.02);
+    } catch (error) {
+      console.warn("Audio tone skipped:", error);
+    }
   },
   noise(duration = 0.08, volume = 0.18, tone = 900) {
-    if (!this.ctx) return;
-    const length = Math.max(1, Math.floor(this.ctx.sampleRate * duration));
-    const buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length);
-    const src = this.ctx.createBufferSource();
-    const filter = this.ctx.createBiquadFilter();
-    const gain = this.ctx.createGain();
-    src.buffer = buffer;
-    filter.type = "bandpass";
-    filter.frequency.value = tone;
-    gain.gain.value = volume;
-    src.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.master);
-    src.start();
+    try {
+      if (!this.ctx || !this.master) return;
+      const length = Math.max(1, Math.floor(this.ctx.sampleRate * duration));
+      const buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length);
+      const src = this.ctx.createBufferSource();
+      const filter = this.ctx.createBiquadFilter();
+      const gain = this.ctx.createGain();
+      src.buffer = buffer;
+      filter.type = "bandpass";
+      filter.frequency.value = tone;
+      gain.gain.value = volume;
+      src.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.master);
+      src.start();
+    } catch (error) {
+      console.warn("Audio noise skipped:", error);
+    }
   },
   play(name) {
-    this.resume();
-    if (name === "playerAttack") this.tone(760, 0.055, "triangle", 0.045, 1.35);
-    if (name === "hit") this.noise(0.055, 0.07, 1200);
-    if (name === "bossAttack") {
-      this.tone(180, 0.18, "sawtooth", 0.12, 0.62);
-      this.noise(0.12, 0.08, 360);
+    try {
+      this.resume();
+      if (name === "playerAttack") this.tone(760, 0.055, "triangle", 0.045, 1.35);
+      if (name === "hit") this.noise(0.055, 0.07, 1200);
+      if (name === "bossAttack") {
+        this.tone(180, 0.18, "sawtooth", 0.12, 0.62);
+        this.noise(0.12, 0.08, 360);
+      }
+      if (name === "bossWave") {
+        this.tone(130, 0.18, "sawtooth", 0.12, 1.7);
+        setTimeout(() => this.tone(196, 0.2, "sawtooth", 0.1, 1.45), 110);
+      }
+      if (name === "slam") {
+        this.tone(90, 0.24, "square", 0.14, 0.45);
+        this.noise(0.16, 0.12, 180);
+      }
+      if (name === "hurt") this.tone(120, 0.12, "square", 0.08, 0.7);
+    } catch (error) {
+      console.warn("Audio play skipped:", error);
     }
-    if (name === "bossWave") {
-      this.tone(130, 0.18, "sawtooth", 0.12, 1.7);
-      setTimeout(() => this.tone(196, 0.2, "sawtooth", 0.1, 1.45), 110);
-    }
-    if (name === "slam") {
-      this.tone(90, 0.24, "square", 0.14, 0.45);
-      this.noise(0.16, 0.12, 180);
-    }
-    if (name === "hurt") this.tone(120, 0.12, "square", 0.08, 0.7);
   },
   setMusic(mode) {
-    this.resume();
-    if (!this.ctx || this.musicMode === mode) return;
-    this.stopMusic();
-    this.musicMode = mode;
-    const playStep = () => {
-      if (!this.ctx || this.musicMode !== mode) return;
-      const menu = [392, 494, 587, 494, 440, 523, 659, 523];
-      const game = [196, 247, 294, 330, 294, 247, 220, 262];
-      const seq = mode === "game" ? game : menu;
-      const stepKey = mode === "game" ? "gameStep" : "menuStep";
-      const freq = seq[this[stepKey] % seq.length];
-      this[stepKey]++;
-      this.musicTone(freq, mode === "game" ? 0.16 : 0.22, mode === "game" ? "square" : "triangle", mode === "game" ? 0.06 : 0.045);
-      this.musicTimer = setTimeout(playStep, mode === "game" ? 260 : 390);
-    };
-    playStep();
+    try {
+      this.resume();
+      if (!this.ctx || this.musicMode === mode) return;
+      this.stopMusic();
+      this.musicMode = mode;
+      const playStep = () => {
+        if (!this.ctx || this.musicMode !== mode) return;
+        const menu = [392, 494, 587, 494, 440, 523, 659, 523];
+        const game = [196, 247, 294, 330, 294, 247, 220, 262];
+        const seq = mode === "game" ? game : menu;
+        const stepKey = mode === "game" ? "gameStep" : "menuStep";
+        const freq = seq[this[stepKey] % seq.length];
+        this[stepKey]++;
+        this.musicTone(freq, mode === "game" ? 0.16 : 0.22, mode === "game" ? "square" : "triangle", mode === "game" ? 0.06 : 0.045);
+        this.musicTimer = setTimeout(playStep, mode === "game" ? 260 : 390);
+      };
+      playStep();
+    } catch (error) {
+      console.warn("Music skipped:", error);
+    }
   },
   musicTone(freq, duration, type, volume) {
-    const now = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = type;
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(volume, now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    osc.connect(gain);
-    gain.connect(this.musicGain);
-    osc.start(now);
-    osc.stop(now + duration + 0.02);
+    try {
+      if (!this.ctx || !this.musicGain) return;
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(volume, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      osc.connect(gain);
+      gain.connect(this.musicGain);
+      osc.start(now);
+      osc.stop(now + duration + 0.02);
+    } catch (error) {
+      console.warn("Music tone skipped:", error);
+    }
   },
   stopMusic() {
     if (this.musicTimer) clearTimeout(this.musicTimer);
@@ -246,6 +288,27 @@ const audio = {
     this.musicMode = "";
   }
 };
+
+function syncVolumeControls() {
+  const value = Math.round(audio.musicVolume * 100);
+  ["#homeMusicVolume", "#gameMusicVolume"].forEach(selector => {
+    const input = $(selector);
+    if (input && Number(input.value) !== value) input.value = value;
+  });
+}
+
+function configureGameViewport(canvas) {
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const width = rect.width || window.visualViewport?.width || window.innerWidth || 360;
+  const height = rect.height || window.visualViewport?.height || window.innerHeight || 640;
+  const aspect = Math.max(0.42, Math.min(0.9, width / Math.max(1, height)));
+  VIEW_H = Math.round(Math.max(960, Math.min(1780, VIEW_W / aspect)));
+  WORLD_W = VIEW_W * 3;
+  WORLD_H = VIEW_H * 3;
+  if (canvas.width !== VIEW_W) canvas.width = VIEW_W;
+  if (canvas.height !== VIEW_H) canvas.height = VIEW_H;
+}
 
 function blankUser(profile = {}) {
   const characters = {};
@@ -259,7 +322,7 @@ function blankUser(profile = {}) {
     email: profile.email || "",
     photoURL: profile.photoURL || "",
     provider: profile.provider || "guest",
-    gold: 0,
+    gold: 4000,
     gems: 0,
     selectedCharacter: "warrior_01",
     characters,
@@ -377,6 +440,31 @@ const storage = {
         { merge: true }
       );
     }
+  },
+  async rankings() {
+    if (user?.provider !== "google") return localRankings();
+    try {
+      const services = await getFirebaseServices();
+      const rankingQuery = services.firestoreSdk.query(
+        services.firestoreSdk.collection(services.firebaseDb, "users"),
+        services.firestoreSdk.orderBy("records.bestWave", "desc"),
+        services.firestoreSdk.limit(10)
+      );
+      const snapshot = await services.firestoreSdk.getDocs(rankingQuery);
+      const rows = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          uid: doc.id,
+          nickname: data.nickname || "이름 없는 용사",
+          bestWave: data.records?.bestWave || 0,
+          bestScore: data.records?.bestScore || 0
+        };
+      }).filter(row => row.bestWave > 0 || row.uid === user.uid);
+      return rows.length ? rows : localRankings();
+    } catch (error) {
+      console.warn("Ranking load failed, using local ranking:", error);
+      return localRankings();
+    }
   }
 };
 
@@ -411,9 +499,34 @@ function canOfferCard(card, cardLevels) {
   return !requirements || requirements.some(id => (cardLevels[id] || 0) > 0);
 }
 
+function escapeHTML(value) {
+  return String(value).replace(/[&<>"']/g, char => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;"
+  }[char]));
+}
+
+function localRankings() {
+  if (!user) return [];
+  return [{
+    uid: user.uid,
+    nickname: user.nickname || "동당탕탕용사",
+    bestWave: user.records?.bestWave || 0,
+    bestScore: user.records?.bestScore || 0,
+    local: true
+  }];
+}
+
+let rankingRenderSeq = 0;
+
 function renderHome() {
   updateUnlocks();
   $("#nickname").textContent = user.nickname;
+  const nicknameInput = $("#nicknameInput");
+  if (nicknameInput) nicknameInput.value = user.nickname;
   $("#accountType").textContent = user.provider === "guest" ? "게스트" : "Google";
   $("#goldText").textContent = `${user.gold.toLocaleString()}G`;
   $("#gemText").textContent = `${user.gems.toLocaleString()}◆`;
@@ -547,23 +660,62 @@ function renderRecords() {
     ["플레이 횟수", user.totalPlayCount]
   ];
   $("#recordGrid").innerHTML = data.map(([label, value]) => `<div class="record-item"><small>${label}</small><strong>${value}</strong></div>`).join("");
+  renderRankings();
+}
+
+function renderRankingRows(rows, status = "") {
+  const list = $("#rankingList");
+  if (!list) return;
+  if (!rows.length) {
+    list.innerHTML = `<div class="ranking-empty">${status || "아직 랭킹 기록이 없습니다."}</div>`;
+    return;
+  }
+  list.innerHTML = rows.slice(0, 10).map((row, index) => {
+    const rank = index + 1;
+    const topClass = rank <= 3 ? ` top-${rank}` : "";
+    const mineClass = row.uid === user.uid ? " mine" : "";
+    return `
+      <article class="ranking-row${topClass}${mineClass}">
+        <span class="rank-badge">${rank}</span>
+        <strong>${escapeHTML(row.nickname || "이름 없는 용사")}</strong>
+        <span>Wave ${Number(row.bestWave || 0).toLocaleString()}</span>
+      </article>
+    `;
+  }).join("");
+  if (status) list.insertAdjacentHTML("beforeend", `<div class="ranking-empty">${escapeHTML(status)}</div>`);
+}
+
+async function renderRankings() {
+  const seq = ++rankingRenderSeq;
+  renderRankingRows([], "랭킹을 불러오는 중...");
+  const rows = await storage.rankings();
+  if (seq !== rankingRenderSeq) return;
+  renderRankingRows(rows, user?.provider === "guest" ? "게스트는 내 기록만 표시됩니다." : "");
 }
 
 function startGame() {
-  game.start(user.selectedCharacter);
   showScreen("gameScreen");
+  requestAnimationFrame(() => game.start(user.selectedCharacter));
+}
+
+function restoreCachedSession() {
+  const cached = loadCachedUser();
+  if (!cached) return;
+  user = cached;
+  renderHome();
+  showScreen("homeScreen");
 }
 
 function rewardFor(result) {
   const dungeonBonus = result.clearedDungeonCount >= 3 ? 220 : result.clearedDungeonCount === 2 ? 120 : result.clearedDungeonCount === 1 ? 50 : 0;
-  return 100 + dungeonBonus + (result.bossKilled ? 150 : 0) + (result.newBest ? 200 : 0);
+  return 100 + dungeonBonus + (result.goldEarned || 0) + ((result.bossKillCount || 0) * 150) + (result.newBest ? 200 : 0);
 }
 
 function finishRun(result) {
   lastResult = result;
   user.totalPlayCount++;
   user.progress.totalKills += result.kills;
-  user.progress.bossKills += result.bossKilled ? 1 : 0;
+  user.progress.bossKills += result.bossKillCount || (result.bossKilled ? 1 : 0);
   user.progress.stageClears += result.clearedDungeonCount;
   user.progress.longestSurvival = Math.max(user.progress.longestSurvival, result.survivalTime);
   user.progress.lightningPicks += result.lightningPicks;
@@ -583,6 +735,7 @@ function finishRun(result) {
     ["점수", result.score.toLocaleString()],
     ["웨이브", result.wave],
     ["처치", result.kills],
+    ["획득 골드", `${(result.goldEarned || 0).toLocaleString()}G`],
     ["생존 시간", fmtTime(result.survivalTime)],
     ["보상", `${result.gold.toLocaleString()}G`],
     ["최고 기록", result.newBest ? "갱신 +200G" : "유지"]
@@ -602,6 +755,8 @@ const game = {
   start(characterId) {
     this.canvas = $("#gameCanvas");
     this.ctx = this.canvas.getContext("2d");
+    $("#gameScreen").classList.remove("volume-open");
+    configureGameViewport(this.canvas);
     const passive = user.characters[characterId].passiveLevel;
     const ch = CHARACTERS.find(item => item.id === characterId);
     this.state = {
@@ -609,12 +764,15 @@ const game = {
       ch,
       t: 0,
       score: 0,
+      goldEarned: 0,
       wave: 1,
       kills: 0,
       level: 1,
       xp: 0,
       xpNeed: 5,
       bossKilled: false,
+      bossKillCount: 0,
+      xpBuffTime: 0,
       clearedDungeonCount: 0,
       poisonKills: 0,
       healing: 0,
@@ -681,8 +839,20 @@ const game = {
     this.joy.y = 0;
     this.keys = {};
     this.bindJoystick();
-    audio.setMusic("game");
+    this.draw();
     requestAnimationFrame(ts => this.loop(ts));
+    audio.setMusic("game");
+  },
+  resizeViewport() {
+    if (!this.canvas || !this.state) return;
+    configureGameViewport(this.canvas);
+    const s = this.state;
+    s.world.w = WORLD_W;
+    s.world.h = WORLD_H;
+    s.player.x = Math.max(28, Math.min(s.world.w - 28, s.player.x));
+    s.player.y = Math.max(28, Math.min(s.world.h - 28, s.player.y));
+    this.updateCamera();
+    this.draw();
   },
   bindJoystick() {
     const joy = $("#joystick");
@@ -734,9 +904,35 @@ const game = {
     if (!this.running) return;
     const dt = Math.min(0.033, (ts - this.last) / 1000) * (this.speed || 1);
     this.last = ts;
-    if (!this.paused) this.update(dt);
-    this.draw();
+    try {
+      if (!this.paused) this.update(dt);
+      this.draw();
+    } catch (error) {
+      console.error("Game loop error:", error);
+      this.drawEmergencyFrame();
+    }
     requestAnimationFrame(next => this.loop(next));
+  },
+  drawEmergencyFrame() {
+    const ctx = this.ctx;
+    const s = this.state;
+    if (!ctx || !s) return;
+    ctx.clearRect(0, 0, VIEW_W, VIEW_H);
+    ctx.fillStyle = "#97dfc9";
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.fillStyle = "#24313f";
+    ctx.font = "bold 30px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText("Loading...", VIEW_W / 2, VIEW_H / 2);
+    if (s.player) {
+      ctx.save();
+      ctx.translate(VIEW_W / 2, VIEW_H / 2 + 56);
+      ctx.fillStyle = s.ch?.color || "#ffd66e";
+      ctx.beginPath();
+      ctx.arc(0, 0, 28, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   },
   update(dt) {
     const s = this.state;
@@ -744,7 +940,7 @@ const game = {
     const nextWave = 1 + Math.floor(s.t / 35);
     if (nextWave !== s.wave) s.bossWaveActive = false;
     s.wave = nextWave;
-    if (s.wave % 5 === 0 && !s.bossWavesSpawned[s.wave]) this.spawnBossWave();
+    if (s.wave >= 5 && s.wave % 5 === 0 && !s.bossWavesSpawned[s.wave]) this.spawnBossWave();
     if (s.t > 120) s.clearedDungeonCount = Math.max(s.clearedDungeonCount, 1);
     if (s.t > 210) s.clearedDungeonCount = Math.max(s.clearedDungeonCount, 2);
     if (s.t > 300) {
@@ -763,6 +959,7 @@ const game = {
     p.y = Math.max(28, Math.min(s.world.h - 28, p.y + moveY * s.moveSpeed * dt));
     this.updateCamera();
     p.inv = Math.max(0, p.inv - dt);
+    s.xpBuffTime = Math.max(0, s.xpBuffTime - dt);
     s.timeSinceDamage += dt;
     if (s.timeSinceDamage >= s.regenDelay && p.hp < p.maxHp) {
       const healed = Math.min(p.maxHp - p.hp, s.regenRate * dt);
@@ -837,7 +1034,8 @@ const game = {
     const s = this.state;
     s.bossWavesSpawned[s.wave] = true;
     s.bossWaveActive = true;
-    const type = BOSS_TYPES[Math.floor((s.wave / 5 - 1) % BOSS_TYPES.length)];
+    const bossIndex = Math.max(0, Math.floor(s.wave / 5) - 1) % BOSS_TYPES.length;
+    const type = BOSS_TYPES[bossIndex] || BOSS_TYPES[0];
     const angle = Math.random() * Math.PI * 2;
     const distance = 430;
     const x = Math.max(64, Math.min(s.world.w - 64, s.player.x + Math.cos(angle) * distance));
@@ -1153,13 +1351,24 @@ const game = {
     const s = this.state;
     s.kills++;
     s.score += Math.floor((enemy.boss ? 600 : 40 + s.wave * 6) * s.scoreMultiplier);
-    s.xp += enemy.boss ? 6 : 1;
+    const baseXp = enemy.boss ? 18 + Math.floor(s.wave / 5) * 5 : 1;
+    const xpGain = Math.ceil(baseXp * (s.xpBuffTime > 0 ? 2 : 1));
+    const goldGain = enemy.boss ? 220 + s.wave * 25 : 2 + Math.floor(s.wave / 3);
+    s.xp += xpGain;
+    s.goldEarned += Math.floor(goldGain * s.scoreMultiplier);
+    s.pops.push({ x: enemy.x, y: enemy.y - enemy.r - 24, text: `+${xpGain}XP`, life: 0.6, color: "#ffd35a" });
+    if (goldGain > 0) s.pops.push({ x: enemy.x, y: enemy.y - enemy.r - 2, text: `+${Math.floor(goldGain * s.scoreMultiplier)}G`, life: 0.6, color: "#fff4a8" });
     if (s.lifeSteal > 0 && s.player.hp < s.player.maxHp) {
       const healed = Math.min(s.player.maxHp - s.player.hp, s.lifeSteal);
       s.player.hp += healed;
       s.healing += healed;
     }
-    if (enemy.boss) s.bossKilled = true;
+    if (enemy.boss) {
+      s.bossKilled = true;
+      s.bossKillCount++;
+      s.xpBuffTime = 10;
+      s.alerts.push({ text: "EXP BUFF x2 - 10s", life: 2.2, total: 2.2 });
+    }
     if (enemy.poison > 0 || s.synergyPoison) s.poisonKills++;
     while (s.xp >= s.xpNeed) {
       s.xp -= s.xpNeed;
@@ -1170,12 +1379,14 @@ const game = {
   },
   offerCards() {
     this.paused = true;
+    $("#gameScreen").classList.remove("volume-open");
     const available = SKILL_CARDS.filter(card =>
       (this.state.cardLevels[card.id] || 0) < CARD_MAX_LEVEL &&
       canOfferCard(card, this.state.cardLevels)
     );
     if (!available.length) {
       this.paused = false;
+      $("#gameScreen").classList.remove("volume-open");
       return;
     }
     const picks = [...available].sort(() => Math.random() - 0.5).slice(0, 3);
@@ -1212,38 +1423,32 @@ const game = {
     $("#cardModal").hidden = true;
     this.cardPicks = [];
     this.paused = false;
+    $("#gameScreen").classList.remove("volume-open");
   },
   updateHud() {
     const s = this.state;
     $("#waveHud").textContent = `Wave ${s.wave}`;
     $("#timeHud").textContent = fmtTime(s.t);
     $("#hpHud").textContent = `HP ${Math.max(0, Math.ceil(s.player.hp))}/${Math.ceil(s.player.maxHp)}`;
-    $("#killHud").textContent = `${s.kills} 처치`;
+    $("#killHud").textContent = `${s.kills} 처치 · ${s.goldEarned.toLocaleString()}G`;
     $("#xpBar").style.width = `${Math.min(100, s.xp / s.xpNeed * 100)}%`;
+    const buffHud = $("#buffHud");
+    if (buffHud) {
+      buffHud.hidden = s.xpBuffTime <= 0;
+      buffHud.textContent = s.xpBuffTime > 0 ? `EXP x2 ${Math.ceil(s.xpBuffTime)}s` : "";
+    }
   },
   draw() {
     const ctx = this.ctx;
     const s = this.state;
     this.updateCamera();
     ctx.clearRect(0, 0, VIEW_W, VIEW_H);
-    ctx.fillStyle = "#97dfc9";
-    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-    ctx.fillStyle = "#7fcfaf";
+    this.drawWorldBackground(ctx);
     ctx.save();
     ctx.translate(-s.camera.x, -s.camera.y);
-    const startY = Math.floor(s.camera.y / 130) * 130;
-    const endY = s.camera.y + VIEW_H + 130;
-    const startX = Math.floor(s.camera.x / 120) * 120;
-    const endX = s.camera.x + VIEW_W + 120;
-    for (let y = startY; y < endY; y += 130) {
-      for (let x = startX; x < endX; x += 120) {
-        ctx.beginPath();
-        ctx.ellipse(x + ((y / 130) % 2) * 35, y, 26, 10, -0.2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-    ctx.strokeStyle = "rgba(36,49,63,0.1)";
-    ctx.lineWidth = 8;
+    this.drawWorldDetails(ctx);
+    ctx.strokeStyle = "rgba(31,43,56,0.12)";
+    ctx.lineWidth = 10;
     ctx.strokeRect(4, 4, s.world.w - 8, s.world.h - 8);
     s.warnings.forEach(warning => this.drawWarning(ctx, warning));
     s.enemies.forEach(e => this.drawEnemy(ctx, e));
@@ -1303,6 +1508,230 @@ const game = {
       ctx.fillText("PAUSE", VIEW_W / 2, VIEW_H / 2 - 20);
     }
   },
+  drawWorldBackground(ctx) {
+    const gradient = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+    gradient.addColorStop(0, "#aee7c6");
+    gradient.addColorStop(0.42, "#93d8ad");
+    gradient.addColorStop(1, "#77c797");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    ctx.fillStyle = "rgba(255,255,255,0.06)";
+    for (let y = 0; y < VIEW_H; y += 120) {
+      ctx.fillRect(0, y, VIEW_W, 1);
+    }
+    ctx.fillStyle = "rgba(255,244,184,0.16)";
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H * 0.3);
+  },
+  drawWorldDetails(ctx) {
+    const s = this.state;
+    const left = s.camera.x;
+    const right = s.camera.x + VIEW_W;
+    const top = s.camera.y;
+    const bottom = s.camera.y + VIEW_H;
+    const startY = top - 90;
+    const endY = bottom + 120;
+    const centerX = left + VIEW_W / 2;
+    const pathW = 330;
+    const pathLeft = centerX - pathW / 2;
+    const pathRight = centerX + pathW / 2;
+
+    this.drawGrassAndMoss(ctx, left, right, top, bottom);
+    this.drawStonePath(ctx, pathLeft, pathRight, startY, endY);
+    this.drawRuinsEntrance(ctx, centerX, top + 36);
+    this.drawRuinsProps(ctx, left, right, top, bottom, centerX, pathW);
+
+    ctx.strokeStyle = "rgba(255,255,255,0.1)";
+    ctx.lineWidth = 2;
+    const gridX = left;
+    const gridY = top;
+    for (let x = gridX; x < right + 120; x += 240) {
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+    }
+    for (let y = gridY; y < bottom + 120; y += 240) {
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(right, y);
+      ctx.stroke();
+    }
+  },
+  drawGrassAndMoss(ctx, left, right, top, bottom) {
+    const startY = top - 30;
+    const startX = left - 30;
+    for (let y = startY; y < bottom + 120; y += 150) {
+      for (let x = startX; x < right + 140; x += 150) {
+        const wobble = Math.sin((x - left) * 0.017 + (y - top) * 0.013);
+        if (wobble > -0.15) this.drawGrassClump(ctx, x + 36 + wobble * 12, y + 48);
+        ctx.fillStyle = "rgba(255,245,178,0.24)";
+        ctx.beginPath();
+        ctx.arc(x + 86, y + 92, 2.2, 0, Math.PI * 2);
+        ctx.arc(x + 96, y + 88, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  },
+  drawStonePath(ctx, pathLeft, pathRight, startY, endY) {
+    ctx.fillStyle = "rgba(96,116,94,0.18)";
+    ctx.beginPath();
+    ctx.moveTo(pathLeft - 44, startY);
+    ctx.lineTo(pathRight + 44, startY);
+    ctx.lineTo(pathRight + 76, endY);
+    ctx.lineTo(pathLeft - 76, endY);
+    ctx.closePath();
+    ctx.fill();
+
+    let row = 0;
+    for (let y = startY; y < endY; y += 72) {
+      const rowOffset = row % 2 ? 42 : 0;
+      for (let x = pathLeft - 20 + rowOffset; x < pathRight; x += 84) {
+        const localX = x - pathLeft;
+        const localY = y - startY;
+        const w = 76 + Math.sin(localX * 0.04) * 8;
+        const h = 62 + Math.cos(localY * 0.05) * 5;
+        ctx.fillStyle = "#b7b89f";
+        ctx.strokeStyle = "rgba(70,79,70,0.42)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.rect(x, y, w, h);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "rgba(255,255,255,0.18)";
+        ctx.fillRect(x + 8, y + 8, w - 18, 6);
+        ctx.fillStyle = "rgba(53,111,66,0.26)";
+        if ((Math.floor(x + y) % 3) === 0) {
+          ctx.beginPath();
+          ctx.ellipse(x + w * 0.55, y + h - 6, 22, 5, -0.12, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      row++;
+    }
+  },
+  drawRuinsEntrance(ctx, x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = "rgba(43,56,54,0.18)";
+    ctx.beginPath();
+    ctx.ellipse(0, 154, 210, 36, 0, 0, Math.PI * 2);
+    ctx.fill();
+    this.drawStoneBlock(ctx, -170, 34, 56, 150);
+    this.drawStoneBlock(ctx, 114, 34, 56, 150);
+    this.drawStoneBlock(ctx, -122, 0, 244, 52);
+    ctx.fillStyle = "#607164";
+    ctx.fillRect(-72, 68, 144, 116);
+    ctx.fillStyle = "#34443e";
+    ctx.beginPath();
+    ctx.moveTo(-54, 184);
+    ctx.lineTo(-54, 106);
+    ctx.quadraticCurveTo(0, 54, 54, 106);
+    ctx.lineTo(54, 184);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(26,36,34,0.36)";
+    ctx.lineWidth = 6;
+    ctx.stroke();
+    for (let i = 0; i < 5; i++) this.drawStoneBlock(ctx, -120 + i * 48, 190 + i * 14, 48, 18);
+    this.drawVines(ctx, -164, 20, 92);
+    this.drawVines(ctx, 142, 20, 100);
+    ctx.restore();
+  },
+  drawRuinsProps(ctx, left, right, top, bottom, centerX, pathW) {
+    const startY = top + 100;
+    let row = 0;
+    for (let y = startY; y < bottom + 300; y += 360) {
+      const side = row % 2 ? -1 : 1;
+      const pillarX = centerX + side * (pathW / 2 + 100);
+      const brokenX = centerX - side * (pathW / 2 + 150);
+      if (pillarX > left - 120 && pillarX < right + 120) {
+        this.drawBrokenPillar(ctx, pillarX, y + 90, 54, 150, side);
+      }
+      if (brokenX > left - 160 && brokenX < right + 160) {
+        this.drawRubble(ctx, brokenX, y + 230);
+      }
+      this.drawGrassClump(ctx, centerX + side * (pathW / 2 + 32), y + 288);
+      row++;
+    }
+  },
+  drawStoneBlock(ctx, x, y, w, h) {
+    ctx.fillStyle = "#9a9d90";
+    ctx.strokeStyle = "rgba(51,59,55,0.42)";
+    ctx.lineWidth = 3;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = "rgba(255,255,255,0.16)";
+    ctx.fillRect(x + 7, y + 7, Math.max(8, w - 14), 6);
+    ctx.strokeStyle = "rgba(57,70,62,0.22)";
+    for (let yy = y + 34; yy < y + h; yy += 34) {
+      ctx.beginPath();
+      ctx.moveTo(x, yy);
+      ctx.lineTo(x + w, yy + Math.sin(yy) * 2);
+      ctx.stroke();
+    }
+  },
+  drawBrokenPillar(ctx, x, y, w, h, lean) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(lean * 0.04);
+    ctx.fillStyle = "rgba(43,56,54,0.2)";
+    ctx.beginPath();
+    ctx.ellipse(0, h + 12, w * 0.78, 14, 0, 0, Math.PI * 2);
+    ctx.fill();
+    this.drawStoneBlock(ctx, -w / 2, 0, w, h);
+    ctx.fillStyle = "#85897e";
+    ctx.beginPath();
+    ctx.moveTo(-w / 2, 0);
+    ctx.lineTo(w / 2, 0);
+    ctx.lineTo(w / 2 - 12, -22);
+    ctx.lineTo(4, -10);
+    ctx.lineTo(-12, -28);
+    ctx.closePath();
+    ctx.fill();
+    this.drawVines(ctx, -w * 0.25, 6, h * 0.72);
+    ctx.restore();
+  },
+  drawRubble(ctx, x, y) {
+    ctx.save();
+    ctx.translate(x, y);
+    for (let i = 0; i < 7; i++) {
+      const px = Math.cos(i * 1.7) * (18 + i * 4);
+      const py = Math.sin(i * 1.1) * 18;
+      ctx.fillStyle = i % 2 ? "#a9aa9a" : "#8f9388";
+      ctx.strokeStyle = "rgba(51,59,55,0.32)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.rect(px - 14, py - 10, 28 + (i % 3) * 8, 20 + (i % 2) * 8);
+      ctx.fill();
+      ctx.stroke();
+    }
+    this.drawGrassClump(ctx, 18, 18);
+    ctx.restore();
+  },
+  drawVines(ctx, x, y, h) {
+    ctx.strokeStyle = "#3f8a4d";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    for (let i = 0; i < 5; i++) ctx.lineTo(x + Math.sin(i * 1.2) * 12, y + h * (i + 1) / 5);
+    ctx.stroke();
+    ctx.fillStyle = "#57ad54";
+    for (let i = 0; i < 6; i++) {
+      ctx.beginPath();
+      ctx.ellipse(x + Math.sin(i * 1.7) * 14, y + i * h / 6 + 8, 8, 4, i, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+  drawGrassClump(ctx, x, y) {
+    ctx.strokeStyle = "#4ea05a";
+    ctx.lineWidth = 3;
+    for (let i = -3; i <= 3; i++) {
+      ctx.beginPath();
+      ctx.moveTo(x + i * 6, y);
+      ctx.quadraticCurveTo(x + i * 7, y - 16 - Math.abs(i) * 2, x + i * 12, y - 26 + Math.abs(i) * 3);
+      ctx.stroke();
+    }
+  },
   drawWarning(ctx, warning) {
     const progress = Math.max(0, Math.min(1, warning.life / warning.total));
     ctx.save();
@@ -1350,24 +1779,39 @@ const game = {
   drawPlayer(ctx, p, ch) {
     ctx.save();
     ctx.translate(p.x, p.y);
-    ctx.fillStyle = "rgba(36,49,63,0.16)";
+    ctx.fillStyle = "rgba(31,43,56,0.2)";
     ctx.beginPath();
-    ctx.ellipse(0, 26, 28, 10, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 31, 32, 12, 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = ch.accent || "#fffdf8";
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(-20, 4, 40, 34, 10);
+    else ctx.rect(-20, 4, 40, 34);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(31,43,56,0.22)";
+    ctx.lineWidth = 4;
+    ctx.stroke();
     ctx.fillStyle = ch.color;
     ctx.beginPath();
-    ctx.arc(0, -8, 28, 0, Math.PI * 2);
+    ctx.arc(0, -11, 29, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.42)";
+    ctx.beginPath();
+    ctx.arc(-10, -22, 8, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "#fff";
     ctx.beginPath();
-    ctx.arc(-9, -12, 5, 0, Math.PI * 2);
-    ctx.arc(9, -12, 5, 0, Math.PI * 2);
+    ctx.arc(-10, -14, 5, 0, Math.PI * 2);
+    ctx.arc(10, -14, 5, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "#24313f";
-    ctx.fillRect(-12, -12, 5, 6);
-    ctx.fillRect(7, -12, 5, 6);
-    ctx.fillStyle = ch.accent || "#fffdf8";
-    ctx.fillRect(-16, 14, 32, 24);
+    ctx.fillRect(-12, -14, 4, 7);
+    ctx.fillRect(8, -14, 4, 7);
+    ctx.strokeStyle = "#24313f";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, -5, 8, 0.15, Math.PI - 0.15);
+    ctx.stroke();
     this.drawPlayerProp(ctx, ch);
     ctx.restore();
   },
@@ -1532,6 +1976,7 @@ const game = {
   end(cleared) {
     if (!this.running) return;
     this.running = false;
+    $("#gameScreen").classList.remove("volume-open");
     audio.setMusic("menu");
     const s = this.state;
     finishRun({
@@ -1540,9 +1985,11 @@ const game = {
       score: Math.floor(s.score + s.t * 3),
       wave: s.wave,
       kills: s.kills,
+      goldEarned: s.goldEarned,
       survivalTime: Math.floor(s.t),
       clearedDungeonCount: s.clearedDungeonCount,
       bossKilled: s.bossKilled,
+      bossKillCount: s.bossKillCount,
       lightningPicks: s.lightningPicks,
       poisonKills: s.poisonKills,
       healing: s.healing
@@ -1624,6 +2071,14 @@ document.addEventListener("keyup", event => {
   }
 });
 
+window.addEventListener("resize", () => {
+  if (game.running) requestAnimationFrame(() => game.resizeViewport());
+});
+
+window.addEventListener("orientationchange", () => {
+  if (game.running) setTimeout(() => game.resizeViewport(), 180);
+});
+
 $("#googleLoginBtn").addEventListener("click", async () => {
   try {
     audio.setMusic("menu");
@@ -1651,12 +2106,34 @@ $("#pauseBtn").addEventListener("click", () => {
   game.paused = !game.paused;
   $("#pauseBtn").textContent = game.paused ? "▶" : "Ⅱ";
   $("#pauseBtn").classList.toggle("active", game.paused);
+  $("#gameScreen").classList.toggle("volume-open", game.paused);
 });
 $("#speedBtn").addEventListener("click", () => {
   if (!game.running) return;
   game.speed = game.speed === 2 ? 1 : 2;
   $("#speedBtn").textContent = game.speed === 2 ? "x2" : "x1";
   $("#speedBtn").classList.toggle("active", game.speed === 2);
+});
+["#homeMusicVolume", "#gameMusicVolume"].forEach(selector => {
+  const input = $(selector);
+  if (input) {
+    input.value = Math.round(audio.musicVolume * 100);
+    input.addEventListener("input", event => audio.setMusicVolume(event.target.value));
+  }
+});
+$("#nicknameForm")?.addEventListener("submit", async event => {
+  event.preventDefault();
+  if (!user) return;
+  const input = $("#nicknameInput");
+  const nextName = (input?.value || "").trim().slice(0, 12) || "동당탕탕용사";
+  user.nickname = nextName;
+  $("#nickname").textContent = nextName;
+  if (input) input.value = nextName;
+  await storage.save(user);
+  renderRecords();
+});
+$("#refreshRankingBtn")?.addEventListener("click", () => {
+  if (user) renderRankings();
 });
 $("#claimRewardBtn").addEventListener("click", async () => {
   audio.setMusic("menu");
@@ -1673,3 +2150,5 @@ $$(".tab").forEach(tab => {
     $$(".panel").forEach(panel => panel.classList.toggle("active", panel.id === tab.dataset.panel));
   });
 });
+
+restoreCachedSession();
