@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>동당탕탕 던전 RPG</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="phone-shell" aria-label="동당탕탕 던전 RPG">
+      <section id="loginScreen" class="screen active login-screen">
+        <div class="brand">
+          <div class="brand-mark">동</div>
+          <h1>동당탕탕 던전 RPG</h1>
+          <p>세로 화면으로 즐기는 캐주얼 로그라이크 던전</p>
+        </div>
+        <div class="login-actions">
+          <button id="googleLoginBtn" class="primary-btn">Google로 시작</button>
+          <button id="guestLoginBtn" class="secondary-btn">게스트로 시작</button>
+        </div>
+        <p class="fine-print">Firebase 설정이 없으면 이 기기 localStorage에 저장됩니다.</p>
+      </section>
+
+      <section id="homeScreen" class="screen">
+        <header class="topbar">
+          <div>
+            <strong id="nickname">동당탕탕용사</strong>
+            <small id="accountType">게스트</small>
+          </div>
+          <div class="wallet">
+            <span id="goldText">0G</span>
+            <span id="gemText">0◆</span>
+          </div>
+        </header>
+
+        <nav class="tabs" aria-label="주 메뉴">
+          <button class="tab active" data-panel="charactersPanel">캐릭터</button>
+          <button class="tab" data-panel="equipmentPanel">장비</button>
+          <button class="tab" data-panel="recordsPanel">기록</button>
+        </nav>
+
+        <div id="charactersPanel" class="panel active">
+          <div id="characterList" class="character-list"></div>
+        </div>
+
+        <div id="equipmentPanel" class="panel">
+          <div class="equipped-row">
+            <div>
+              <small>장착 무기</small>
+              <strong id="equippedWeapon">없음</strong>
+            </div>
+            <div>
+              <small>장착 갑옷</small>
+              <strong id="equippedArmor">없음</strong>
+            </div>
+          </div>
+          <div id="chestList" class="chest-list"></div>
+          <div id="equipmentList" class="equipment-list"></div>
+        </div>
+
+        <div id="recordsPanel" class="panel">
+          <div id="recordGrid" class="record-grid"></div>
+          <div class="ranking-note">
+            <strong>랭킹 확장 구조</strong>
+            <span>전체/주간/캐릭터별/웨이브/킬/생존 시간 기준으로 확장 가능</span>
+          </div>
+        </div>
+
+        <button id="startRunBtn" class="start-btn">던전 입장</button>
+      </section>
+
+      <section id="gameScreen" class="screen game-screen">
+        <canvas id="gameCanvas" width="720" height="1280"></canvas>
+        <div class="hud">
+          <div><strong id="waveHud">Wave 1</strong><small id="timeHud">00:00</small></div>
+          <div><strong id="hpHud">HP 100</strong><small id="killHud">0 처치</small></div>
+        </div>
+        <div class="game-controls">
+          <button id="pauseBtn" class="round-control" type="button" aria-label="일시정지">Ⅱ</button>
+          <button id="speedBtn" class="speed-control" type="button" aria-label="2배속">x1</button>
+        </div>
+        <div class="xp-wrap"><div id="xpBar"></div></div>
+        <div id="buildList" class="build-list"></div>
+        <div id="joystick" class="joystick" aria-label="이동 조이스틱"><span></span></div>
+        <div id="cardModal" class="card-modal" hidden>
+          <h2>레벨 업!</h2>
+          <div id="cardChoices" class="card-choices"></div>
+        </div>
+      </section>
+
+      <section id="resultScreen" class="screen result-screen">
+        <h2 id="resultTitle">탐험 종료</h2>
+        <div id="resultStats" class="result-stats"></div>
+        <button id="claimRewardBtn" class="primary-btn">보상 받고 돌아가기</button>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
